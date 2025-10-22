@@ -1,0 +1,76 @@
+# === SMARTBIN PATCH v2: two-pass inference + debug ===
+from fastapi import UploadFile, File
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    """
+    Robust predict:
+      1) Normal pass (conf=0.05, imgsz=640)
+      2) If no boxes -> fallback pass with TTA (augment=True, imgsz=960, conf=0.001)
+      3) Class thresholds + top-1 fallback
+      4) Returns small debug info to help tuning
+    """
+    global MODEL, LOADED_PATH
+
+    # 0) Load image
+    file_bytes = await file.read()
+    img = load_image_bytes(file_bytes)
+
+    names = MODEL.names
+
+    def run_predict(img, conf, imgsz, augment=False):
+        r = MODEL.predict(source=img, imgsz=imgsz, conf=conf, iou=0.6,
+                          augment=augment, verbose=False)[0]
+        dets_local = []
+        if getattr(r, "boxes", None) is not None and len(r.boxes) > 0:
+            for b in r.boxes:
+                cls_id = int(b.cls.item())
+                conf_  = float(b.conf.item())
+                x1, y1, x2, y2 = map(float, b.xyxy[0].tolist())
+                dets_local.append({
+                    "name": names[cls_id],
+                    "conf": conf_,
+                    "box":  [x1, y1, x2, y2],
+                })
+        return dets_local
+
+    # 1) First pass (fast, normal)
+    dets1 = run_predict(img, conf=0.05, imgsz=640, augment=False)
+
+    # 2) Fallback pass (bigger + TTA + very low conf)
+    dets2 = []
+    if not dets1:
+        dets2 = run_predict(img, conf=0.001, imgsz=960, augment=True)
+
+    # merge
+    dets = dets1 if dets1 else dets2
+
+    # 3) Class-specific thresholds
+    CLASS_THRESH = {
+        "paper_cardboard": 0.25,
+        "lvp_plastic_metal": 0.28,  # help cartons
+        "glass_white": 0.20,        # help white glass recall
+        "glass_brown": 0.25,
+        "glass_green": 0.25,
+        "residual": 0.25,
+        "battery": 0.25,
+    }
+    filtered = [d for d in dets if d["conf"] >= CLASS_THRESH.get(d["name"], 0.25)]
+
+    # 4) Top-1 fallback if still empty
+    top = None
+    if not filtered and dets:
+        top = max(dets, key=lambda x: x["conf"])
+        if top["conf"] >= 0.12:      # tiny safety floor
+            filtered = [top]
+
+    # 5) Minimal debug (helps us tune if needed)
+    debug = {}
+    if dets:
+        top3 = sorted(dets, key=lambda x: x["conf"], reverse=True)[:3]
+        debug = {"first_pass": len(dets1), "second_pass": len(dets2),
+                 "top3": [{"name": d["name"], "conf": round(d["conf"], 3)} for d in top3]}
+
+    return {"detections": filtered, "model": LOADED_PATH, "debug": debug}
+# === END PATCH ===
+

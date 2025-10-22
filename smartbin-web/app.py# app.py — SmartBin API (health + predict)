@@ -1,0 +1,81 @@
+import io
+from typing import Dict, Any, List
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
+import numpy as np
+
+# Lazy model load so the app starts fast
+_model = None
+MODEL_CANDIDATES = [
+    # 1) when your new Mac training finishes, this file will exist:
+    "../smartbin-train/runs/detect/mac_ft_boosters/weights/best.pt",
+    # 2) fallback to the older weight you already have:
+    "../smartbin-train/best.pt"
+]
+
+CLASSES = ["paper_cardboard","lvp_plastic_metal","glass_white",
+           "glass_brown","glass_green","residual","battery"]
+
+# thresholds (you can tune later)
+GLOBAL_CONF = 0.35
+PER_CLASS_MIN = {"battery": 0.60, "residual": 0.65, "lvp_plastic_metal": 0.35}
+
+app = FastAPI(title="SmartBin API", version="0.1.0")
+app.add_middleware(CORSMiddleware,
+                   allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+def get_model():
+    global _model
+    if _model is None:
+        from ultralytics import YOLO
+        for p in MODEL_CANDIDATES:
+            try:
+                _model = YOLO(p)
+                print(f"Loaded model: {p}")
+                break
+            except Exception:
+                continue
+        if _model is None:
+            raise RuntimeError("No model weights found. Put best.pt in smartbin-train.")
+    return _model
+
+@app.get("/health")
+def health(): 
+    return {"ok": True, "classes": CLASSES}
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)) -> Dict[str, Any]:
+    # read image
+    img = Image.open(io.BytesIO(await file.read())).convert("RGB")
+    arr = np.array(img)
+    H, W = arr.shape[:2]
+
+    # run inference
+    model = get_model()
+    r = model.predict(source=arr, conf=GLOBAL_CONF, iou=0.5, verbose=False)[0]
+
+    # build result
+    dets: List[Dict[str, Any]] = []
+    if r.boxes is not None:
+        for b in r.boxes:
+            conf = float(b.conf[0])
+            cls_id = int(b.cls[0])
+            name = model.names.get(cls_id, str(cls_id))
+            # per-class gating
+            if conf < PER_CLASS_MIN.get(name, GLOBAL_CONF):
+                continue
+            x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
+            dets.append({
+                "class": name,
+                "confidence": round(conf, 4),
+                "bbox": {"x1": x1/W, "y1": y1/H, "x2": x2/W, "y2": y2/H}
+            })
+
+    dets.sort(key=lambda d: d["confidence"], reverse=True)
+    return {"detections": dets}
+
+from fastapi import FastAPI
+app = FastAPI(title="SmartBin API")
+@app.get("/health")
+def health(): return {"ok": True}
