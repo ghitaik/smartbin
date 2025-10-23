@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>SmartBin Web</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    button{padding:8px 14px;border-radius:10px;border:1px solid #ccc;background:#0ea5e9;color:#fff;cursor:pointer}
+    input[type="text"]{width:100%;max-width:620px;padding:8px 10px;border:1px solid #ccc;border-radius:8px}
+    #out{white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-top:12px}
+    img{max-width:100%;display:block;margin-top:10px;border-radius:8px}
+    .pill{display:inline-block;margin:4px 6px 0 0;padding:4px 10px;border:1px solid #e2e8f0;border-radius:999px;background:#f1f5f9;font-size:12px}
+  </style>
+</head>
+<body>
+  <h1>SmartBin ♻️</h1>
+  <p>Upload a photo and get the German bin suggestion.</p>
+
+  <div class="row">
+    <label>API URL</label>
+    <input id="api" type="text" placeholder="https://smartbin-api-xxxx.onrender.com" />
+    <button id="save">Use</button>
+  </div>
+
+  <div class="row">
+    <input id="file" type="file" accept="image/*"/>
+    <button id="predict">Predict</button>
+  </div>
+
+  <div id="tags"></div>
+  <div id="out"></div>
+  <img id="preview" style="display:none"/>
+
+<script>
+const apiInput = document.getElementById('api');
+const saveBtn  = document.getElementById('save');
+const fileInp  = document.getElementById('file');
+const predict  = document.getElementById('predict');
+const out      = document.getElementById('out');
+const tags     = document.getElementById('tags');
+const preview  = document.getElementById('preview');
+
+const LS_KEY = 'smartbin_api_url';
+// default to your Render API so it works out of the box:
+const DEFAULT_API = 'https://smartbin-api-4ycp.onrender.com';
+apiInput.value = localStorage.getItem(LS_KEY) || DEFAULT_API;
+
+saveBtn.onclick = () => {
+  localStorage.setItem(LS_KEY, apiInput.value.trim());
+  out.textContent = 'Saved API: ' + apiInput.value.trim();
+};
+
+fileInp.addEventListener('change', () => {
+  const f = fileInp.files?.[0]; if(!f) return;
+  const url = URL.createObjectURL(f);
+  preview.src = url; preview.style.display = 'block';
+});
+
+predict.onclick = async () => {
+  const base = (localStorage.getItem(LS_KEY) || apiInput.value || '').trim();
+  if(!base) { out.textContent = 'Set API URL first.'; return; }
+  const f = fileInp.files?.[0];
+  if(!f) { out.textContent = 'Choose an image first.'; return; }
+
+  const form = new FormData(); form.append('file', f, f.name);
+  out.textContent = 'Uploading to ' + base + ' ...';
+
+  try {
+    const r = await fetch(base.replace(/\/+$/,'') + '/suggest', { method:'POST', body: form });
+    const j = await r.json();
+
+    tags.innerHTML = '';
+    ['paper_cardboard','lvp_plastic_metal','glass_white','glass_brown','glass_green','residual','battery']
+      .forEach(n => { const s = document.createElement('span'); s.className='pill'; s.textContent=n; tags.appendChild(s); });
+
+    out.textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    out.textContent = 'Error: ' + e;
+  }
+};
+</script>
+</body>
+</html>
