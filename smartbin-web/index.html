@@ -1,85 +1,155 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>SmartBin Web</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SmartBin ♻️</title>
   <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-    button{padding:8px 14px;border-radius:10px;border:1px solid #ccc;background:#0ea5e9;color:#fff;cursor:pointer}
-    input[type="text"]{width:100%;max-width:620px;padding:8px 10px;border:1px solid #ccc;border-radius:8px}
-    #out{white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;margin-top:12px}
-    img{max-width:100%;display:block;margin-top:10px;border-radius:8px}
-    .pill{display:inline-block;margin:4px 6px 0 0;padding:4px 10px;border:1px solid #e2e8f0;border-radius:999px;background:#f1f5f9;font-size:12px}
+    :root { --fg:#0f172a; --sub:#475569; --brand:#16a34a; --line:#e2e8f0; --bg:#f8fafc; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; color:var(--fg); background:var(--bg); }
+    .wrap { max-width:980px; margin:40px auto; padding:0 16px; }
+    h1 { display:flex; align-items:center; gap:8px; font-size:28px; margin:0 0 16px; }
+    h1 .logo { display:inline-grid; place-items:center; width:28px; height:28px; border-radius:6px; background:var(--brand); color:#fff; font-weight:700; font-size:16px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:8px 0 12px; }
+    input[type=text] { width:460px; max-width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; }
+    input[type=file] { padding:6px 0; }
+    button { padding:10px 14px; border:0; border-radius:8px; background:#2563eb; color:#fff; cursor:pointer; font-weight:600; }
+    button.secondary { background:#0ea5e9; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    small.help { color:var(--sub); }
+    .panel { margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    pre { white-space:pre-wrap; word-break:break-word; margin:0; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid var(--line); margin:0 6px 6px 0; font-size:12px; color:var(--sub); background:#fff; }
+    #preview { max-width:100%; border-radius:10px; border:1px dashed var(--line); display:none; margin-top:12px; }
+    .muted { color:var(--sub); }
+    .foot { margin:30px 0 6px; color:var(--sub); font-size:13px; }
   </style>
 </head>
 <body>
-  <h1>SmartBin ♻️</h1>
-  <p>Upload a photo and get the German bin suggestion.</p>
+  <div class="wrap">
+    <h1><span class="logo">♻︎</span> SmartBin</h1>
+    <p class="muted">Upload a photo and get the German bin suggestion.</p>
 
-  <div class="row">
-    <label>API URL</label>
-    <input id="api" type="text" placeholder="https://smartbin-api-xxxx.onrender.com" />
-    <button id="save">Use</button>
+    <div class="row">
+      <label for="api"><strong>API URL</strong></label>
+      <input id="api" type="text" placeholder="https://smartbin-api-4ycp.onrender.com" />
+      <button id="save" class="secondary" title="Save API URL">Use</button>
+    </div>
+
+    <div class="row">
+      <input id="file" type="file" accept="image/*" />
+      <button id="predict">Predict</button>
+      <small class="help">Large images are auto-compressed in the browser to avoid timeouts.</small>
+    </div>
+
+    <div id="tags" class="row"></div>
+
+    <div class="panel">
+      <pre id="out" class="muted">Ready.</pre>
+      <img id="preview" alt="preview"/>
+    </div>
+
+    <p class="foot">Frontend runs on Vercel. Backend runs on Render (may wake up after inactivity).</p>
   </div>
 
-  <div class="row">
-    <input id="file" type="file" accept="image/*"/>
-    <button id="predict">Predict</button>
-  </div>
+  <script>
+  const apiInput = document.getElementById('api');
+  const saveBtn  = document.getElementById('save');
+  const fileInp  = document.getElementById('file');
+  const predict  = document.getElementById('predict');
+  const out      = document.getElementById('out');
+  const tags     = document.getElementById('tags');
+  const preview  = document.getElementById('preview');
 
-  <div id="tags"></div>
-  <div id="out"></div>
-  <img id="preview" style="display:none"/>
+  const LS_KEY = 'smartbin_api_url';
+  const DEFAULT_API = 'https://smartbin-api-4ycp.onrender.com';
+  apiInput.value = localStorage.getItem(LS_KEY) || DEFAULT_API;
 
-<script>
-const apiInput = document.getElementById('api');
-const saveBtn  = document.getElementById('save');
-const fileInp  = document.getElementById('file');
-const predict  = document.getElementById('predict');
-const out      = document.getElementById('out');
-const tags     = document.getElementById('tags');
-const preview  = document.getElementById('preview');
+  saveBtn.onclick = () => {
+    localStorage.setItem(LS_KEY, apiInput.value.trim());
+    out.textContent = 'Saved API: ' + apiInput.value.trim();
+  };
 
-const LS_KEY = 'smartbin_api_url';
-// default to your Render API so it works out of the box:
-const DEFAULT_API = 'https://smartbin-api-4ycp.onrender.com';
-apiInput.value = localStorage.getItem(LS_KEY) || DEFAULT_API;
+  fileInp.addEventListener('change', () => {
+    const f = fileInp.files?.[0]; if(!f) return;
+    const url = URL.createObjectURL(f);
+    preview.src = url; preview.style.display = 'block';
+  });
 
-saveBtn.onclick = () => {
-  localStorage.setItem(LS_KEY, apiInput.value.trim());
-  out.textContent = 'Saved API: ' + apiInput.value.trim();
-};
-
-fileInp.addEventListener('change', () => {
-  const f = fileInp.files?.[0]; if(!f) return;
-  const url = URL.createObjectURL(f);
-  preview.src = url; preview.style.display = 'block';
-});
-
-predict.onclick = async () => {
-  const base = (localStorage.getItem(LS_KEY) || apiInput.value || '').trim();
-  if(!base) { out.textContent = 'Set API URL first.'; return; }
-  const f = fileInp.files?.[0];
-  if(!f) { out.textContent = 'Choose an image first.'; return; }
-
-  const form = new FormData(); form.append('file', f, f.name);
-  out.textContent = 'Uploading to ' + base + ' ...';
-
-  try {
-    const r = await fetch(base.replace(/\/+$/,'') + '/suggest', { method:'POST', body: form });
-    const j = await r.json();
-
-    tags.innerHTML = '';
-    ['paper_cardboard','lvp_plastic_metal','glass_white','glass_brown','glass_green','residual','battery']
-      .forEach(n => { const s = document.createElement('span'); s.className='pill'; s.textContent=n; tags.appendChild(s); });
-
-    out.textContent = JSON.stringify(j, null, 2);
-  } catch (e) {
-    out.textContent = 'Error: ' + e;
+  // Downscale big images to keep requests fast & reliable
+  async function downscale(file, maxSide = 1024, quality = 0.85) {
+    if (!file?.type?.startsWith('image/')) return file;
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    if (scale === 1) { URL.revokeObjectURL(url); return file; }
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(url);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    return new File([blob], (file.name || 'image') + '.jpg', { type: 'image/jpeg' });
   }
-};
-</script>
+
+  function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+  async function fetchSuggest(base, form, signal) {
+    const r = await fetch(base + '/suggest', { method: 'POST', body: form, signal });
+    if (!r.ok) {
+      const txt = await r.text().catch(()=> '');
+      throw new Error(`HTTP ${r.status} ${r.statusText} — ${txt || '(no body)'}`);
+    }
+    return r.json();
+  }
+
+  async function predictWithRetry(base, form) {
+    // first attempt (120s timeout)
+    const c1 = new AbortController();
+    const t1 = setTimeout(() => c1.abort(), 120000);
+    try {
+      return await fetchSuggest(base, form, c1.signal);
+    } catch (e1) {
+      clearTimeout(t1);
+      out.textContent = 'First attempt failed: ' + (e1?.message || e1) + ' — retrying…';
+      // poke the backend awake, then retry once
+      try { await fetch(base + '/health', { cache:'no-store' }); } catch(_) {}
+      await sleep(1200);
+      const c2 = new AbortController();
+      const t2 = setTimeout(() => c2.abort(), 120000);
+      try {
+        return await fetchSuggest(base, form, c2.signal);
+      } finally { clearTimeout(t2); }
+    } finally { clearTimeout(t1); }
+  }
+
+  predict.onclick = async () => {
+    const base = (localStorage.getItem(LS_KEY) || apiInput.value || '').trim().replace(/\/+$/,'');
+    if (!base) { out.textContent = 'Set API URL first.'; return; }
+    const f0 = fileInp.files?.[0]; if (!f0) { out.textContent = 'Choose an image first.'; return; }
+
+    const f = await downscale(f0); // shrink if needed
+    const form = new FormData(); form.append('file', f, f.name);
+    out.textContent = `Uploading to ${base} … (file ${Math.round(f.size/1024)} KB)`;
+
+    predict.disabled = true;
+    try {
+      const j = await predictWithRetry(base, form);
+
+      // render class labels (static list to keep it simple)
+      tags.innerHTML = '';
+      ['paper_cardboard','lvp_plastic_metal','glass_white','glass_brown','glass_green','residual','battery']
+        .forEach(n => { const s = document.createElement('span'); s.className='pill'; s.textContent=n; tags.appendChild(s); });
+
+      out.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      out.textContent = 'Error: ' + (e?.message || e) + ` (online=${navigator.onLine})`;
+    } finally {
+      predict.disabled = false;
+    }
+  };
+  </script>
 </body>
 </html>
+
