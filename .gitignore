@@ -21,3 +21,4 @@ out/
 .vscode/
 .idea/
 
+smartbin-api/*.bak
