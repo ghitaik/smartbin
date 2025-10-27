@@ -1,133 +1,210 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import os, cv2, numpy as np
+from typing import List, Dict, Any
+import os, io, time, pathlib, urllib.request
+import numpy as np
+import cv2
 from ultralytics import YOLO
-from bootstrap import ensure_model
 
+# -----------------------------
+# CORS (allow web app to call API)
+# -----------------------------
 app = FastAPI(title="SmartBin API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=["*"],  # lock down later to your Vercel URL if you want
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ---- Load model from SMARTBIN_MODEL (local path or URL via bootstrap.ensure_model) ----
-MODEL_PATH = os.environ.get("SMARTBIN_MODEL", "").strip() or None
-try:
-    MODEL_PATH = ensure_model()  # downloads if SMARTBIN_MODEL is a URL
-    MODEL = YOLO(MODEL_PATH)
-    LOADED_PATH = MODEL_PATH
-except Exception as e:
-    MODEL = None
-    LOADED_PATH = None
-    print("Model load error:", e)
+# -----------------------------
+# Global model cache
+# -----------------------------
+MODEL = None            # YOLO() object
+LOADED_PATH = None      # Resolved file actually loaded (path on disk)
 
+def _resolve_model_path() -> str:
+    """
+    Reads SMARTBIN_MODEL env. If it's an HTTPS URL, download to /tmp/smartbin/best.pt.
+    Otherwise, treat it as a local absolute path.
+    """
+    src = os.environ.get("SMARTBIN_MODEL", "").strip()
+    if not src:
+        raise RuntimeError("SMARTBIN_MODEL env missing (local path or https URL)")
+
+    if src.lower().startswith(("http://", "https://")):
+        dst = pathlib.Path("/tmp/smartbin/best.pt")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not dst.exists():
+            print(f"Downloading model from {src} -> {dst}")
+            urllib.request.urlretrieve(src, dst)
+        return str(dst)
+
+    # local path
+    if not os.path.exists(src):
+        raise FileNotFoundError(f"SMARTBIN_MODEL path not found: {src}")
+    return src
+
+def get_model():
+    """
+    Loads the YOLO model once and reuses it (warm cache).
+    """
+    global MODEL, LOADED_PATH
+    resolved = _resolve_model_path()
+    if MODEL is None or LOADED_PATH != resolved:
+        t0 = time.time()
+        MODEL = YOLO(resolved)
+        LOADED_PATH = resolved
+        print(f"✅ YOLO model loaded from {resolved} in {time.time()-t0:.2f}s")
+    return MODEL
+
+# -----------------------------
+# Startup: warm-load model
+# -----------------------------
+@app.on_event("startup")
+def _warmup():
+    try:
+        m = get_model()        # force load at boot
+        _ = m.names            # touch attribute to keep ready
+        print("🔹 Model warm-loaded at startup.")
+    except Exception as e:
+        # Non-fatal: we still lazy-load on first real request
+        print(f"⚠️ Warm-load failed (will lazy-load later): {e}")
+
+# -----------------------------
+# Schemas
+# -----------------------------
+class PredictOut(BaseModel):
+    detections: List[Dict[str, Any]]
+    model: str
+
+class SuggestOut(BaseModel):
+    bin: str
+    reason: str
+    top_class: str
+    detections: List[Dict[str, Any]]
+
+# -----------------------------
+# Util: read UploadFile -> OpenCV image (BGR)
+# -----------------------------
+def _file_to_bgr(upload: UploadFile) -> np.ndarray:
+    data = upload.file.read()
+    arr = np.frombuffer(data, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Could not decode image")
+    return img
+
+# -----------------------------
+# Routes
+# -----------------------------
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.get("/model")
 def model_info():
-    # report which path we tried and whether it’s loaded
-    candidates = [os.environ.get("SMARTBIN_MODEL", "").strip()]
-    return {"loaded_path": LOADED_PATH, "candidates": [c for c in candidates if c]}
+    m = get_model()
+    # m.names is a dict like {0:'paper_cardboard', ...} -> convert to list by index order
+    idx_to_name = [m.names[i] for i in sorted(m.names.keys())]
+    return {"ok": True, "path": LOADED_PATH, "classes": idx_to_name}
 
-# ---------- Robust image loader (drop alpha, clamp huge images) ----------
-MAX_LONG_SIDE = 1600
-def load_image_bytes(b: bytes) -> np.ndarray:
-    arr = np.frombuffer(b, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise ValueError("Could not decode image")
-    if img.ndim == 3 and img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-    elif img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    h, w = img.shape[:2]
-    m = max(h, w)
-    if m > MAX_LONG_SIDE:
-        s = MAX_LONG_SIDE / float(m)
-        img = cv2.resize(img, (int(w*s), int(h*s)), interpolation=cv2.INTER_AREA)
-    return img
+@app.post("/predict", response_model=PredictOut)
+def predict(file: UploadFile = File(...)):
+    img = _file_to_bgr(file)
+    m = get_model()
 
-# ---------- Class thresholds & German bin mapping ----------
-CLASS_THRESH = {
-    "paper_cardboard": 0.25,
-    "lvp_plastic_metal": 0.28,  # help cartons
-    "glass_white": 0.20,        # help white-glass recall
-    "glass_brown": 0.25,
-    "glass_green": 0.25,
-    "residual": 0.25,
-    "battery": 0.25,
-}
+    # CPU inference on Render free tier
+    res = m.predict(
+        source=img,
+        imgsz=640,
+        conf=0.25,
+        iou=0.6,
+        max_det=10,
+        device="cpu",
+        verbose=False
+    )[0]
 
-CLASS_TO_BIN = {
-    "paper_cardboard": {
-        "bin": "Papiertonne (Blue paper bin)",
-        "note": "Clean, dry paper & cardboard. No food stains."
-    },
-    "lvp_plastic_metal": {
-        "bin": "Gelber Sack / Gelbe Tonne (Lightweight packaging)",
-        "note": "Packaging of plastic/metal/composites incl. drink cartons. Empty, not spotless."
-    },
-    "glass_white": {"bin": "Weißglas-Container", "note": "White/clear glass only. No lids/ceramics."},
-    "glass_brown": {"bin": "Braunglas-Container", "note": "Brown glass bottles/jars."},
-    "glass_green": {"bin": "Grünglas-Container", "note": "Green glass bottles/jars."},
-    "residual": {"bin": "Restmüll (Residual waste)", "note": "Dirty/greasy paper, hygiene items, mixed trash."},
-    "battery": {"bin": "Batteriesammelbox / Händler-Rücknahme", "note": "Hazardous: return to stores/collection points."},
-}
+    dets: List[Dict[str, Any]] = []
+    for b in res.boxes:
+        x1, y1, x2, y2 = [int(v) for v in b.xyxy[0].tolist()]
+        conf = float(b.conf[0].item())
+        cls_id = int(b.cls[0].item())
+        cls_name = m.names.get(cls_id, str(cls_id))
+        dets.append({
+            "cls_id": cls_id,
+            "cls_name": cls_name,
+            "conf": round(conf, 3),
+            "xyxy": [x1, y1, x2, y2],
+        })
 
-# ---------- Predict (boxes) ----------
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    if MODEL is None:
-        return {"detections": [], "loaded_path": LOADED_PATH, "error": "model_not_loaded"}
-    img = load_image_bytes(await file.read())
+    return {"detections": dets, "model": LOADED_PATH}
 
-    # pass 1: normal; pass 2: bigger+augment if nothing found
-    def run(conf, imgsz, augment=False):
-        r = MODEL.predict(source=img, imgsz=imgsz, conf=conf, iou=0.6, augment=augment, verbose=False)[0]
-        dets=[]
-        if getattr(r, "boxes", None) is not None and len(r.boxes) > 0:
-            names = MODEL.names
-            for b in r.boxes:
-                cls_id = int(b.cls.item()); conf_ = float(b.conf.item())
-                x1,y1,x2,y2 = map(float, b.xyxy[0].tolist())
-                dets.append({"name": names[cls_id], "conf": conf_, "box": [x1,y1,x2,y2]})
-        return dets
+@app.post("/suggest", response_model=SuggestOut)
+def suggest(file: UploadFile = File(...)):
+    img = _file_to_bgr(file)
+    m = get_model()
 
-    dets = run(0.05, 640, False)
-    if not dets:
-        dets = run(0.001, 960, True)
+    res = m.predict(
+        source=img,
+        imgsz=640,
+        conf=0.25,
+        iou=0.6,
+        max_det=10,
+        device="cpu",
+        verbose=False
+    )[0]
 
-    filtered = [d for d in dets if d["conf"] >= CLASS_THRESH.get(d["name"], 0.25)]
-    if not filtered and dets:
-        top = max(dets, key=lambda x: x["conf"])
-        if top["conf"] >= 0.12:
-            filtered = [top]
+    dets: List[Dict[str, Any]] = []
+    best = None
+    for b in res.boxes:
+        x1, y1, x2, y2 = [int(v) for v in b.xyxy[0].tolist()]
+        conf = float(b.conf[0].item())
+        cls_id = int(b.cls[0].item())
+        cls_name = m.names.get(cls_id, str(cls_id))
+        item = {
+            "cls_id": cls_id,
+            "cls_name": cls_name,
+            "conf": round(conf, 3),
+            "xyxy": [x1, y1, x2, y2],
+        }
+        dets.append(item)
+        if best is None or conf > best["conf"]:
+            best = item
 
-    return {"detections": filtered, "loaded_path": LOADED_PATH}
+    # Default if nothing found
+    if not best:
+        return {
+            "bin": "unknown",
+            "reason": "No confident detections.",
+            "top_class": "none",
+            "detections": dets
+        }
 
-# ---------- Suggest (top-1 -> bin recommendation) ----------
-@app.post("/suggest")
-async def suggest(file: UploadFile = File(...)):
-    # reuse predict logic
-    resp = await predict(file)
-    dets = resp.get("detections", []) if isinstance(resp, dict) else []
-    if not dets:
-        return {"suggestion": {"ok": False, "reason": "no_detections"}, "detections": [], "model": LOADED_PATH}
-    top = max(dets, key=lambda d: d["conf"])
-    info = CLASS_TO_BIN.get(top["name"], {"bin": "Unknown", "note": ""})
+    name = best["cls_name"]
+    # Simple German-rule mapping
+    if name in ("paper_cardboard", "paper", "cardboard"):
+        bin_name = "Papier (Blue bin)"
+        why = "Paper and clean cardboard go to the blue bin."
+    elif name == "lvp_plastic_metal":
+        bin_name = "Gelber Sack/Tonne (Yellow bin)"
+        why = "Light packaging (plastic/metal/TetraPak) goes to the yellow bin."
+    elif name.startswith("glass_"):
+        color = name.split("_", 1)[1]
+        color_map = {"white": "white (clear)", "brown": "brown", "green": "green"}
+        bin_name = f"Glass container ({color_map.get(color, color)})"
+        why = "Glass is collected in color-sorted bottle banks."
+    elif name == "battery":
+        bin_name = "Battery collection point"
+        why = "Batteries are hazardous—return to stores or collection points."
+    else:
+        bin_name = "Restmüll (Residual)"
+        why = "If not recyclable, it goes to residual waste."
+
     return {
-        "suggestion": {
-            "ok": True,
-            "top_class": top["name"],
-            "confidence": round(float(top["conf"]), 3),
-            "bin": info["bin"],
-            "note": info["note"],
-        },
-        "detections": dets,
-        "model": LOADED_PATH,
+        "bin": bin_name,
+        "reason": why,
+        "top_class": name,
+        "detections": dets
     }
-
