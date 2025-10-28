@@ -32,63 +32,34 @@
   <div id="out"></div>
 
 <script>
-const $ = s => document.querySelector(s);
-let API = localStorage.getItem('smartbin_api') || $('#api').value;
-$('#api').value = API;
-$('#use').onclick = () => {
-  API = $('#api').value.trim().replace(/\/+$/, '');
-  localStorage.setItem('smartbin_api', API);
-  log(`Using API: ${API}`);
-};
-function log(t){ $('#log').textContent = t; }
-
-async function compress(file, maxSide=1600, quality=0.82){
-  const img = await createImageBitmap(file);
-  let {width:w, height:h} = img;
-  const s = Math.max(w,h);
-  if (s>maxSide){ const k = maxSide/s; w=Math.round(w*k); h=Math.round(h*k); }
-  const cv = document.createElement('canvas'); cv.width=w; cv.height=h;
-  const cx = cv.getContext('2d'); cx.drawImage(img,0,0,w,h);
-  const blob = await new Promise(res=>cv.toBlob(res,'image/jpeg',quality));
-  return new File([blob], file.name || 'upload.jpg', {type:'image/jpeg'});
+async function fileToCompressedBlob(file, maxSide=1024, quality=0.8) {
+  const img = new Image(); img.decoding="async";
+  img.src = URL.createObjectURL(file);
+  await new Promise((res, rej)=>{img.onload=res; img.onerror=rej;});
+  const s = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const w = Math.round(img.width*s), h = Math.round(img.height*s);
+  const c = document.createElement("canvas"); c.width=w; c.height=h;
+  c.getContext("2d").drawImage(img, 0, 0, w, h);
+  return await new Promise(res=>c.toBlob(res, "image/jpeg", quality));
 }
-
-$('#go').onclick = async () => {
-  const f = $('#file').files[0];
-  if(!f){ log('Pick a file first'); return; }
-
-  // compress big images to avoid timeouts
-  let up = f; if (f.size > 1_200_000) up = await compress(f, 1600, 0.82);
-
-  // sanity pings (helpful when debugging 404/Failed to fetch)
+async function predict() {
+  const api = document.getElementById("api").value.trim().replace(/\/$/,'');
+  const file = document.getElementById("file").files[0];
+  const out = document.getElementById("out");
+  if (!api || !file) { out.textContent="Set API URL + choose a file."; return; }
   try {
-    const h = await fetch(API + '/health', {cache:'no-store'});
-    if(!h.ok) { log(`Health error ${h.status}`); return; }
-  } catch(e){ log('Health fetch failed: '+e); return; }
-
-  const fd = new FormData();
-  fd.append('file', up, up.name);
-
-  let r;
-  try{
-    r = await fetch(API + '/predict', { method:'POST', body:fd });
-  }catch(e){
-    log('Network error: ' + e);
-    return;
-  }
-
-  if(!r.ok){
-    const txt = await r.text();
-    log(`Error: HTTP ${r.status}  — ${txt}`);
-    return;
-  }
-
-  const json = await r.json();
-  log(JSON.stringify(json, null, 2));
-
-  const url = URL.createObjectURL(up);
-  $('#out').innerHTML = `<img src="${url}" alt="preview">`;
-};
+    const blob = await fileToCompressedBlob(file, 1024, 0.8);
+    const form = new FormData(); form.append("file", blob, "image.jpg");
+    const fetchWithTimeout = (ms)=> {
+      const ctl = new AbortController(); const t=setTimeout(()=>ctl.abort(), ms);
+      return (url, opts)=>fetch(url,{...opts,signal:ctl.signal}).finally(()=>clearTimeout(t));
+    };
+    let r = await fetchWithTimeout(25000)(api + "/predict", { method:"POST", body: form });
+    if (!r.ok) { await new Promise(r=>setTimeout(r,2000)); r = await fetchWithTimeout(25000)(api + "/predict", { method:"POST", body: form }); }
+    if (!r.ok) { out.textContent = `Error: HTTP ${r.status} — ${await r.text()}`; return; }
+    out.textContent = JSON.stringify(await r.json(), null, 2);
+  } catch(e){ out.textContent = "Error: " + e; }
+}
 </script>
 </body>
 </html>
