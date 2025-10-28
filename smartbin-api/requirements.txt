@@ -1,8 +1,12 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi==0.115.2
 uvicorn[standard]==0.30.6
 ultralytics==8.3.0
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
+python-multipart==0.0.9
 
-python-multipart==0.0.9
-python-multipart==0.0.9
+# Force CPU wheels so Render deploys fast and stays within memory
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
