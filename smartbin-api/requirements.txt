@@ -7,7 +7,7 @@ opencv-python-headless==4.10.0.84
 numpy==1.26.4
 python-multipart==0.0.9
 
-# Torch versions that have Python 3.13 CPU wheels on Render
+# CPU wheels for Py3.13 on Render
 torch==2.9.0+cpu
 torchvision==0.24.0
 
