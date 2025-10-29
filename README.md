@@ -19,7 +19,7 @@ It uses a lightweight YOLOv8 model trained on common household waste categories 
 ---
 
 ## 📂 Repo structure
-
+```
 smartbin/
 ├─ smartbin-api/ # FastAPI backend
 │ ├─ app.py # /health, /model, /predict
@@ -31,7 +31,7 @@ smartbin/
 ├─ tests/ # Light API smoke tests
 ├─ render.yaml
 └─ README.md
-
+```
 ---
 
 ## 🚀 Local API quickstart
