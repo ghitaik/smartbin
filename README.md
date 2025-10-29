@@ -80,15 +80,25 @@ then upload an image — e.g., a battery, bottle, or cardboard box.
 
 ---
 
-🧰 CI
+## ⚙️ CI
 
-GitHub Actions run a lightweight smoke test with SMARTBIN_SKIP_LOAD=1
-so YOLO/Torch aren’t downloaded during CI builds.
+GitHub Actions run a lightweight smoke test with  
+`SMARTBIN_SKIP_LOAD=1` so YOLO/Torch aren’t downloaded during CI builds.  
+This keeps the workflow fast and stable.
+
+You can view it here:  
+[![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg)](https://github.com/ghitaik/smartbin/actions)
 
 ---
 
-📜 License
+## 📜 License
 
-MIT — see LICENSE
+MIT — see [LICENSE](LICENSE)
 
-https://smartbin-virid.vercel.app/
+---
+
+**Live demo:**  
+🌍 [https://smartbin-virid.vercel.app](https://smartbin-virid.vercel.app)
+
+**API endpoint:**  
+🧠 [https://smartbin-api-4ycp.onrender.com](https://smartbin-api-4ycp.onrender.com)
