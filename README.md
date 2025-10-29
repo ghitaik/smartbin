@@ -4,13 +4,11 @@ YOLOv8-based waste classifier aligned with German recycling rules 🇩🇪.
 
 [![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml)
 
-
-
-
 **Live API:** https://smartbin-api-4ycp.onrender.com  
 **Web Demo:** https://smartbin-virid.vercel.app
 
 ---
+
 
 ## 🧠 Overview
 
