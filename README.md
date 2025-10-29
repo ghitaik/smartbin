@@ -85,6 +85,7 @@ then upload an image — e.g., a battery, bottle, or cardboard box.
 GitHub Actions run a lightweight smoke test with  
 `SMARTBIN_SKIP_LOAD=1` so YOLO/Torch aren’t downloaded during CI builds.  
 This keeps the workflow fast and stable.
+
 [![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg)](https://github.com/ghitaik/smartbin/actions)
 
 ---
