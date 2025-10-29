@@ -89,6 +89,7 @@ This keeps the workflow fast and stable.
 You can view it here:  
 [![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg)](https://github.com/ghitaik/smartbin/actions)
 
+
 ---
 
 ## 📜 License
