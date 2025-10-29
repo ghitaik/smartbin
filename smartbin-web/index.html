@@ -1,65 +1,109 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SmartBin</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartBin ♻️</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif;max-width:840px;margin:24px auto;padding:0 16px}
-    .row{display:flex;gap:8px;align-items:center}
-    #log{margin-top:10px;padding:8px;background:#f6f6f6;border-radius:6px;white-space:pre-wrap}
-    img{max-width:100%}
-    button{padding:8px 14px;border-radius:8px;border:0;background:#2563eb;color:#fff}
-    input[type=text]{flex:1;padding:8px;border:1px solid #ccc;border-radius:8px}
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 700px;
+      margin: 40px auto;
+      padding: 0 15px;
+    }
+    h1 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    h1 span {
+      font-size: 1.5em;
+    }
+    input[type="file"], button {
+      margin-top: 10px;
+    }
+    pre {
+      background: #f6f6f6;
+      padding: 10px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    #suggestion {
+      margin-top: 15px;
+      padding: 12px;
+      background: #e8f5e9;
+      border-left: 4px solid #4caf50;
+      border-radius: 6px;
+      display: none;
+    }
   </style>
 </head>
 <body>
-  <h1>SmartBin ♻️</h1>
+  <h1>SmartBin <span>♻️</span></h1>
   <p>Upload a photo and get the German bin suggestion.</p>
 
-  <div class="row">
-    <label>API URL</label>
-    <input id="api" type="text" value="https://smartbin-api-4ycp.onrender.com" />
-    <button id="use">Use</button>
-  </div>
+  <label for="api">API URL</label><br />
+  <input id="api" type="text" value="https://smartbin-api-4ycp.onrender.com" style="width: 100%; padding: 6px;" />
+  <button id="use">Use</button>
 
-  <div class="row" style="margin-top:8px;">
-    <input id="file" type="file" accept="image/*" />
-    <button id="go">Predict</button>
-  </div>
+  <br /><br />
+  <input type="file" id="file" accept="image/*" />
+  <button id="predict">Predict</button>
 
-  <div id="log"></div>
-  <div id="out"></div>
+  <div id="suggestion"></div>
+  <pre id="out"></pre>
 
-<script>
-async function fileToCompressedBlob(file, maxSide=1024, quality=0.8) {
-  const img = new Image(); img.decoding="async";
-  img.src = URL.createObjectURL(file);
-  await new Promise((res, rej)=>{img.onload=res; img.onerror=rej;});
-  const s = Math.min(1, maxSide / Math.max(img.width, img.height));
-  const w = Math.round(img.width*s), h = Math.round(img.height*s);
-  const c = document.createElement("canvas"); c.width=w; c.height=h;
-  c.getContext("2d").drawImage(img, 0, 0, w, h);
-  return await new Promise(res=>c.toBlob(res, "image/jpeg", quality));
-}
-async function predict() {
-  const api = document.getElementById("api").value.trim().replace(/\/$/,'');
-  const file = document.getElementById("file").files[0];
-  const out = document.getElementById("out");
-  if (!api || !file) { out.textContent="Set API URL + choose a file."; return; }
-  try {
-    const blob = await fileToCompressedBlob(file, 1024, 0.8);
-    const form = new FormData(); form.append("file", blob, "image.jpg");
-    const fetchWithTimeout = (ms)=> {
-      const ctl = new AbortController(); const t=setTimeout(()=>ctl.abort(), ms);
-      return (url, opts)=>fetch(url,{...opts,signal:ctl.signal}).finally(()=>clearTimeout(t));
+  <script>
+    const btn = document.getElementById("predict");
+    const fileInput = document.getElementById("file");
+    const out = document.getElementById("out");
+    const suggestionBox = document.getElementById("suggestion");
+    const apiInput = document.getElementById("api");
+    let apiURL = apiInput.value;
+
+    document.getElementById("use").onclick = () => {
+      apiURL = apiInput.value.trim();
+      alert("Using API: " + apiURL);
     };
-    let r = await fetchWithTimeout(25000)(api + "/predict", { method:"POST", body: form });
-    if (!r.ok) { await new Promise(r=>setTimeout(r,2000)); r = await fetchWithTimeout(25000)(api + "/predict", { method:"POST", body: form }); }
-    if (!r.ok) { out.textContent = `Error: HTTP ${r.status} — ${await r.text()}`; return; }
-    out.textContent = JSON.stringify(await r.json(), null, 2);
-  } catch(e){ out.textContent = "Error: " + e; }
-}
-</script>
+
+    const BIN_MAP = {
+      "paper_cardboard": "🟦 Blue bin (Papier)",
+      "lvp_plastic_metal": "🟨 Yellow bin (Gelber Sack/Tonne)",
+      "glass_white": "⚪ White glass container",
+      "glass_brown": "🟤 Brown glass container",
+      "glass_green": "🟢 Green glass container",
+      "residual": "⚫ Restmüll",
+      "battery": "🔋 Sondermüll (Hazardous waste)"
+    };
+
+    btn.onclick = async () => {
+      const file = fileInput.files[0];
+      if (!file) return alert("Please select an image first.");
+
+      out.textContent = "Uploading and predicting...";
+      suggestionBox.style.display = "none";
+
+      const form = new FormData();
+      form.append("file", file);
+
+      try {
+        const res = await fetch(`${apiURL}/predict`, { method: "POST", body: form });
+        const json = await res.json();
+        out.textContent = JSON.stringify(json, null, 2);
+
+        if (json.ok && json.detections.length > 0) {
+          const top = json.detections[0];
+          const bin = BIN_MAP[top.class] || "Unknown category";
+          suggestionBox.innerHTML = `<b>Detected:</b> ${top.class} → ${bin}`;
+          suggestionBox.style.display = "block";
+        } else {
+          suggestionBox.textContent = "No detections.";
+          suggestionBox.style.display = "block";
+        }
+      } catch (e) {
+        out.textContent = "Error: " + e;
+      }
+    };
+  </script>
 </body>
 </html>
