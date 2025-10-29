@@ -2,7 +2,8 @@
 
 YOLOv8-based waste classifier aligned with German recycling rules 🇩🇪.
 
-[![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg)](https://github.com/ghitaik/smartbin/actions)
+[![CI](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ghitaik/smartbin/actions/workflows/ci.yml)
+
 
 
 
