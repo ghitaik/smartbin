@@ -50,7 +50,7 @@ Test locally
   -GET http://127.0.0.1:8000/model → model info
 
   -POST http://127.0.0.1:8000/predict → upload file
-
+```
   ---
 
 🧪 Web demo (Vercel)
