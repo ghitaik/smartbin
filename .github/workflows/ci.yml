@@ -2,54 +2,61 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ "main" ]
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          # keep this aligned with what Render supports
+          python-version: "3.11"
 
-      - name: Install deps (backend only)
+      - name: Install backend deps
+        working-directory: smartbin-api
         run: |
-          cd smartbin-api
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install requests pytest
 
-      - name: FastAPI imports OK (skip YOLO/Torch)
+      - name: Verify FastAPI app imports (without loading YOLO)
         env:
           SMARTBIN_SKIP_LOAD: "1"
+        working-directory: smartbin-api
         run: |
-          python - <<'PY'
-          import fastapi, uvicorn
-          print("✅ FastAPI & Uvicorn import OK")
+          python - << 'PY'
+          import fastapi
+          import uvicorn
+          import app
+          assert hasattr(app, "app"), "FastAPI app not found"
+          print("✅ FastAPI imported and app.app exists")
           PY
 
-  # ping your deployed API so the badge also reflects live health
-  health-check:
-    needs: smoke
-    runs-on: ubuntu-latest
-    env:
-      API: https://smartbin-api-4ycp.onrender.com/health
-    steps:
-      - name: Wait for Render cold start (max ~2 min)
+      - name: Smoke test live /health on Render
+        env:
+          API_URL: "https://smartbin-api-4ycp.onrender.com/health"
         run: |
-          end=$((SECONDS+120))
-          until curl -fsS "$API" | jq -e '.ok == true' >/dev/null; do
-            if [ $SECONDS -gt $end ]; then
-              echo "❌ Health never reached ok:true at $API"
-              exit 1
-            fi
-            echo "…waiting for $API"
-            sleep 6
-          done
-          echo "✅ Live health OK"
+          echo "Hitting $API_URL ..."
+          python - << 'PY'
+          import os, requests, sys
+          url = os.environ["API_URL"]
+          try:
+              r = requests.get(url, timeout=5)
+              print("Status:", r.status_code)
+              print("Body:", r.text)
+              r.raise_for_status()
+              data = r.json()
+              assert data.get("ok") is True, "Backend /health did not return ok:true"
+              print("✅ Live /health looks good")
+          except Exception as e:
+              print("❌ Smoke test failed:", e)
+              sys.exit(1)
+          PY
